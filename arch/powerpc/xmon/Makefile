@@ -1,12 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0
 # Makefile for xmon
 
 subdir-ccflags-$(CONFIG_PPC_WERROR) := -Werror
 
 GCOV_PROFILE := n
+UBSAN_SANITIZE := n
 
-ccflags-$(CONFIG_PPC64) := -mno-minimal-toc
+# Disable ftrace for the entire directory
+ORIG_CFLAGS := $(KBUILD_CFLAGS)
+KBUILD_CFLAGS = $(subst -mno-sched-epilog,,$(subst $(CC_FLAGS_FTRACE),,$(ORIG_CFLAGS)))
 
-obj-y			+= xmon.o start.o nonstdio.o
+ccflags-$(CONFIG_PPC64) := $(NO_MINIMAL_TOC)
+
+obj-y			+= xmon.o nonstdio.o spr_access.o
 
 ifdef CONFIG_XMON_DISASSEMBLY
 obj-y			+= ppc-dis.o ppc-opc.o

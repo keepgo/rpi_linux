@@ -67,20 +67,9 @@ static int bfin_eval_adau1373_hw_params(struct snd_pcm_substream *substream,
 	struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
 	int ret;
 	int pll_rate;
-
-	ret = snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_I2S |
-			SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_CBM_CFM);
-	if (ret)
-		return ret;
-
-	ret = snd_soc_dai_set_fmt(codec_dai, SND_SOC_DAIFMT_I2S |
-			SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_CBM_CFM);
-	if (ret)
-		return ret;
 
 	switch (params_rate(params)) {
 	case 48000:
@@ -130,7 +119,7 @@ static int bfin_eval_adau1373_codec_init(struct snd_soc_pcm_runtime *rtd)
 
 	return ret;
 }
-static struct snd_soc_ops bfin_eval_adau1373_ops = {
+static const struct snd_soc_ops bfin_eval_adau1373_ops = {
 	.hw_params = bfin_eval_adau1373_hw_params,
 };
 
@@ -143,10 +132,13 @@ static struct snd_soc_dai_link bfin_eval_adau1373_dai = {
 	.codec_name = "adau1373.0-001a",
 	.ops = &bfin_eval_adau1373_ops,
 	.init = bfin_eval_adau1373_codec_init,
+	.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF |
+			SND_SOC_DAIFMT_CBM_CFM,
 };
 
 static struct snd_soc_card bfin_eval_adau1373 = {
 	.name = "bfin-eval-adau1373",
+	.owner = THIS_MODULE,
 	.dai_link = &bfin_eval_adau1373_dai,
 	.num_links = 1,
 
@@ -162,39 +154,18 @@ static int bfin_eval_adau1373_probe(struct platform_device *pdev)
 
 	card->dev = &pdev->dev;
 
-	return snd_soc_register_card(&bfin_eval_adau1373);
-}
-
-static int __devexit bfin_eval_adau1373_remove(struct platform_device *pdev)
-{
-	struct snd_soc_card *card = platform_get_drvdata(pdev);
-
-	snd_soc_unregister_card(card);
-
-	return 0;
+	return devm_snd_soc_register_card(&pdev->dev, &bfin_eval_adau1373);
 }
 
 static struct platform_driver bfin_eval_adau1373_driver = {
 	.driver = {
 		.name = "bfin-eval-adau1373",
-		.owner = THIS_MODULE,
 		.pm = &snd_soc_pm_ops,
 	},
 	.probe = bfin_eval_adau1373_probe,
-	.remove = __devexit_p(bfin_eval_adau1373_remove),
 };
 
-static int __init bfin_eval_adau1373_init(void)
-{
-	return platform_driver_register(&bfin_eval_adau1373_driver);
-}
-module_init(bfin_eval_adau1373_init);
-
-static void __exit bfin_eval_adau1373_exit(void)
-{
-	platform_driver_unregister(&bfin_eval_adau1373_driver);
-}
-module_exit(bfin_eval_adau1373_exit);
+module_platform_driver(bfin_eval_adau1373_driver);
 
 MODULE_AUTHOR("Lars-Peter Clausen <lars@metafoo.de>");
 MODULE_DESCRIPTION("ALSA SoC bfin adau1373 driver");

@@ -1,9 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Makefile for the MB93090-MB00 motherboard stuff
 #
 
 ifeq "$(CONFIG_PCI)" "y"
-obj-y := pci-frv.o pci-irq.o pci-vdk.o pci-iomap.o
+obj-y := pci-frv.o pci-irq.o pci-vdk.o
 
 ifeq "$(CONFIG_MMU)" "y"
 obj-y += pci-dma.o

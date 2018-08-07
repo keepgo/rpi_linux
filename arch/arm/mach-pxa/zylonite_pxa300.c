@@ -18,11 +18,11 @@
 #include <linux/init.h>
 #include <linux/i2c.h>
 #include <linux/i2c/pxa-i2c.h>
-#include <linux/i2c/pca953x.h>
+#include <linux/platform_data/pca953x.h>
 #include <linux/gpio.h>
 
-#include <mach/pxa300.h>
-#include <mach/zylonite.h>
+#include "pxa300.h"
+#include "zylonite.h"
 
 #include "generic.h"
 
@@ -231,12 +231,12 @@ static struct i2c_board_info zylonite_i2c_board_info[] = {
 		.type		= "pca9539",
 		.addr		= 0x74,
 		.platform_data	= &gpio_exp[0],
-		.irq		= IRQ_GPIO(18),
+		.irq		= PXA_GPIO_TO_IRQ(18),
 	}, {
 		.type		= "pca9539",
 		.addr		= 0x75,
 		.platform_data	= &gpio_exp[1],
-		.irq		= IRQ_GPIO(19),
+		.irq		= PXA_GPIO_TO_IRQ(19),
 	},
 };
 

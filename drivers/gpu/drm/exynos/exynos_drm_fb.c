@@ -6,35 +6,25 @@
  *	Joonyoung Shim <jy0922.shim@samsung.com>
  *	Seung-Woo Kim <sw0312.kim@samsung.com>
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * VA LINUX SYSTEMS AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
- * OTHER DEALINGS IN THE SOFTWARE.
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 
-#include "drmP.h"
-#include "drm_crtc.h"
-#include "drm_crtc_helper.h"
-#include "drm_fb_helper.h"
+#include <drm/drmP.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_crtc_helper.h>
+#include <drm/drm_fb_helper.h>
+#include <drm/drm_atomic.h>
+#include <drm/drm_atomic_helper.h>
+#include <uapi/drm/exynos_drm.h>
 
 #include "exynos_drm_drv.h"
 #include "exynos_drm_fb.h"
-#include "exynos_drm_buf.h"
-#include "exynos_drm_gem.h"
+#include "exynos_drm_fbdev.h"
+#include "exynos_drm_iommu.h"
+#include "exynos_drm_crtc.h"
 
 #define to_exynos_fb(x)	container_of(x, struct exynos_drm_fb, fb)
 
@@ -42,31 +32,56 @@
  * exynos specific framebuffer structure.
  *
  * @fb: drm framebuffer obejct.
- * @exynos_gem_obj: exynos specific gem object containing a gem object.
- * @buffer: pointer to exynos_drm_gem_buffer object.
- *	- contain the memory information to memory region allocated
- *	at default framebuffer creation.
+ * @exynos_gem: array of exynos specific gem object containing a gem object.
  */
 struct exynos_drm_fb {
-	struct drm_framebuffer		fb;
-	struct exynos_drm_gem_obj	*exynos_gem_obj;
-	struct exynos_drm_gem_buf	*buffer;
+	struct drm_framebuffer	fb;
+	struct exynos_drm_gem	*exynos_gem[MAX_FB_BUFFER];
+	dma_addr_t			dma_addr[MAX_FB_BUFFER];
 };
+
+static int check_fb_gem_memory_type(struct drm_device *drm_dev,
+				    struct exynos_drm_gem *exynos_gem)
+{
+	unsigned int flags;
+
+	/*
+	 * if exynos drm driver supports iommu then framebuffer can use
+	 * all the buffer types.
+	 */
+	if (is_drm_iommu_supported(drm_dev))
+		return 0;
+
+	flags = exynos_gem->flags;
+
+	/*
+	 * Physically non-contiguous memory type for framebuffer is not
+	 * supported without IOMMU.
+	 */
+	if (IS_NONCONTIG_BUFFER(flags)) {
+		DRM_ERROR("Non-contiguous GEM memory is not supported.\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
 
 static void exynos_drm_fb_destroy(struct drm_framebuffer *fb)
 {
 	struct exynos_drm_fb *exynos_fb = to_exynos_fb(fb);
-
-	DRM_DEBUG_KMS("%s\n", __FILE__);
+	unsigned int i;
 
 	drm_framebuffer_cleanup(fb);
 
-	/*
-	 * default framebuffer has no gem object so
-	 * a buffer of the default framebuffer should be released at here.
-	 */
-	if (!exynos_fb->exynos_gem_obj && exynos_fb->buffer)
-		exynos_drm_buf_destroy(fb->dev, exynos_fb->buffer);
+	for (i = 0; i < ARRAY_SIZE(exynos_fb->exynos_gem); i++) {
+		struct drm_gem_object *obj;
+
+		if (exynos_fb->exynos_gem[i] == NULL)
+			continue;
+
+		obj = &exynos_fb->exynos_gem[i]->base;
+		drm_gem_object_unreference_unlocked(obj);
+	}
 
 	kfree(exynos_fb);
 	exynos_fb = NULL;
@@ -78,180 +93,121 @@ static int exynos_drm_fb_create_handle(struct drm_framebuffer *fb,
 {
 	struct exynos_drm_fb *exynos_fb = to_exynos_fb(fb);
 
-	DRM_DEBUG_KMS("%s\n", __FILE__);
-
 	return drm_gem_handle_create(file_priv,
-			&exynos_fb->exynos_gem_obj->base, handle);
+				     &exynos_fb->exynos_gem[0]->base, handle);
 }
 
-static int exynos_drm_fb_dirty(struct drm_framebuffer *fb,
-				struct drm_file *file_priv, unsigned flags,
-				unsigned color, struct drm_clip_rect *clips,
-				unsigned num_clips)
-{
-	DRM_DEBUG_KMS("%s\n", __FILE__);
-
-	/* TODO */
-
-	return 0;
-}
-
-static struct drm_framebuffer_funcs exynos_drm_fb_funcs = {
+static const struct drm_framebuffer_funcs exynos_drm_fb_funcs = {
 	.destroy	= exynos_drm_fb_destroy,
 	.create_handle	= exynos_drm_fb_create_handle,
-	.dirty		= exynos_drm_fb_dirty,
 };
 
-static struct drm_framebuffer *
-exynos_drm_fb_init(struct drm_file *file_priv, struct drm_device *dev,
-		    struct drm_mode_fb_cmd *mode_cmd)
+struct drm_framebuffer *
+exynos_drm_framebuffer_init(struct drm_device *dev,
+			    const struct drm_mode_fb_cmd2 *mode_cmd,
+			    struct exynos_drm_gem **exynos_gem,
+			    int count)
 {
 	struct exynos_drm_fb *exynos_fb;
-	struct drm_framebuffer *fb;
-	struct exynos_drm_gem_obj *exynos_gem_obj = NULL;
-	struct drm_gem_object *obj;
-	unsigned int size;
+	int i;
 	int ret;
 
-	DRM_DEBUG_KMS("%s\n", __FILE__);
-
-	mode_cmd->pitch = max(mode_cmd->pitch,
-			mode_cmd->width * (mode_cmd->bpp >> 3));
-
-	DRM_LOG_KMS("drm fb create(%dx%d)\n",
-			mode_cmd->width, mode_cmd->height);
-
 	exynos_fb = kzalloc(sizeof(*exynos_fb), GFP_KERNEL);
-	if (!exynos_fb) {
-		DRM_ERROR("failed to allocate exynos drm framebuffer.\n");
+	if (!exynos_fb)
 		return ERR_PTR(-ENOMEM);
+
+	for (i = 0; i < count; i++) {
+		ret = check_fb_gem_memory_type(dev, exynos_gem[i]);
+		if (ret < 0)
+			goto err;
+
+		exynos_fb->exynos_gem[i] = exynos_gem[i];
+		exynos_fb->dma_addr[i] = exynos_gem[i]->dma_addr
+						+ mode_cmd->offsets[i];
 	}
 
-	fb = &exynos_fb->fb;
-	ret = drm_framebuffer_init(dev, fb, &exynos_drm_fb_funcs);
-	if (ret) {
-		DRM_ERROR("failed to initialize framebuffer.\n");
-		goto err_init;
+	drm_helper_mode_fill_fb_struct(dev, &exynos_fb->fb, mode_cmd);
+
+	ret = drm_framebuffer_init(dev, &exynos_fb->fb, &exynos_drm_fb_funcs);
+	if (ret < 0) {
+		DRM_ERROR("failed to initialize framebuffer\n");
+		goto err;
 	}
 
-	DRM_LOG_KMS("create: fb id: %d\n", fb->base.id);
+	return &exynos_fb->fb;
 
-	size = mode_cmd->pitch * mode_cmd->height;
+err:
+	kfree(exynos_fb);
+	return ERR_PTR(ret);
+}
 
-	/*
-	 * mode_cmd->handle could be NULL at booting time or
-	 * with user request. if NULL, a new buffer or a gem object
-	 * would be allocated.
-	 */
-	if (!mode_cmd->handle) {
-		if (!file_priv) {
-			struct exynos_drm_gem_buf *buffer;
+static struct drm_framebuffer *
+exynos_user_fb_create(struct drm_device *dev, struct drm_file *file_priv,
+		      const struct drm_mode_fb_cmd2 *mode_cmd)
+{
+	const struct drm_format_info *info = drm_get_format_info(dev, mode_cmd);
+	struct exynos_drm_gem *exynos_gem[MAX_FB_BUFFER];
+	struct drm_gem_object *obj;
+	struct drm_framebuffer *fb;
+	int i;
+	int ret;
 
-			/*
-			 * in case that file_priv is NULL, it allocates
-			 * only buffer and this buffer would be used
-			 * for default framebuffer.
-			 */
-			buffer = exynos_drm_buf_create(dev, size);
-			if (IS_ERR(buffer)) {
-				ret = PTR_ERR(buffer);
-				goto err_buffer;
-			}
+	for (i = 0; i < info->num_planes; i++) {
+		unsigned int height = (i == 0) ? mode_cmd->height :
+				     DIV_ROUND_UP(mode_cmd->height, info->vsub);
+		unsigned long size = height * mode_cmd->pitches[i] +
+				     mode_cmd->offsets[i];
 
-			exynos_fb->buffer = buffer;
-
-			DRM_LOG_KMS("default: dma_addr = 0x%lx, size = 0x%x\n",
-					(unsigned long)buffer->dma_addr, size);
-
-			goto out;
-		} else {
-			exynos_gem_obj = exynos_drm_gem_create(dev, file_priv,
-							&mode_cmd->handle,
-							size);
-			if (IS_ERR(exynos_gem_obj)) {
-				ret = PTR_ERR(exynos_gem_obj);
-				goto err_buffer;
-			}
-		}
-	} else {
-		obj = drm_gem_object_lookup(dev, file_priv, mode_cmd->handle);
+		obj = drm_gem_object_lookup(file_priv, mode_cmd->handles[i]);
 		if (!obj) {
-			DRM_ERROR("failed to lookup gem object.\n");
-			goto err_buffer;
+			DRM_ERROR("failed to lookup gem object\n");
+			ret = -ENOENT;
+			goto err;
 		}
 
-		exynos_gem_obj = to_exynos_gem_obj(obj);
+		exynos_gem[i] = to_exynos_gem(obj);
 
-		drm_gem_object_unreference_unlocked(obj);
+		if (size > exynos_gem[i]->size) {
+			i++;
+			ret = -EINVAL;
+			goto err;
+		}
 	}
 
-	/*
-	 * if got a exynos_gem_obj from either a handle or
-	 * a new creation then exynos_fb->exynos_gem_obj is NULL
-	 * so that default framebuffer has no its own gem object,
-	 * only its own buffer object.
-	 */
-	exynos_fb->buffer = exynos_gem_obj->buffer;
-
-	DRM_LOG_KMS("dma_addr = 0x%lx, size = 0x%x, gem object = 0x%x\n",
-			(unsigned long)exynos_fb->buffer->dma_addr, size,
-			(unsigned int)&exynos_gem_obj->base);
-
-out:
-	exynos_fb->exynos_gem_obj = exynos_gem_obj;
-
-	drm_helper_mode_fill_fb_struct(fb, mode_cmd);
+	fb = exynos_drm_framebuffer_init(dev, mode_cmd, exynos_gem, i);
+	if (IS_ERR(fb)) {
+		ret = PTR_ERR(fb);
+		goto err;
+	}
 
 	return fb;
 
-err_buffer:
-	drm_framebuffer_cleanup(fb);
-
-err_init:
-	kfree(exynos_fb);
+err:
+	while (i--)
+		drm_gem_object_unreference_unlocked(&exynos_gem[i]->base);
 
 	return ERR_PTR(ret);
 }
 
-struct drm_framebuffer *exynos_drm_fb_create(struct drm_device *dev,
-					      struct drm_file *file_priv,
-					      struct drm_mode_fb_cmd *mode_cmd)
-{
-	DRM_DEBUG_KMS("%s\n", __FILE__);
-
-	return exynos_drm_fb_init(file_priv, dev, mode_cmd);
-}
-
-struct exynos_drm_gem_buf *exynos_drm_fb_get_buf(struct drm_framebuffer *fb)
+dma_addr_t exynos_drm_fb_dma_addr(struct drm_framebuffer *fb, int index)
 {
 	struct exynos_drm_fb *exynos_fb = to_exynos_fb(fb);
-	struct exynos_drm_gem_buf *buffer;
 
-	DRM_DEBUG_KMS("%s\n", __FILE__);
+	if (WARN_ON_ONCE(index >= MAX_FB_BUFFER))
+		return 0;
 
-	buffer = exynos_fb->buffer;
-	if (!buffer)
-		return NULL;
-
-	DRM_DEBUG_KMS("vaddr = 0x%lx, dma_addr = 0x%lx\n",
-			(unsigned long)buffer->kvaddr,
-			(unsigned long)buffer->dma_addr);
-
-	return buffer;
+	return exynos_fb->dma_addr[index];
 }
 
-static void exynos_drm_output_poll_changed(struct drm_device *dev)
-{
-	struct exynos_drm_private *private = dev->dev_private;
-	struct drm_fb_helper *fb_helper = private->fb_helper;
+static struct drm_mode_config_helper_funcs exynos_drm_mode_config_helpers = {
+	.atomic_commit_tail = drm_atomic_helper_commit_tail_rpm,
+};
 
-	if (fb_helper)
-		drm_fb_helper_hotplug_event(fb_helper);
-}
-
-static struct drm_mode_config_funcs exynos_drm_mode_config_funcs = {
-	.fb_create = exynos_drm_fb_create,
+static const struct drm_mode_config_funcs exynos_drm_mode_config_funcs = {
+	.fb_create = exynos_user_fb_create,
 	.output_poll_changed = exynos_drm_output_poll_changed,
+	.atomic_check = exynos_atomic_check,
+	.atomic_commit = drm_atomic_helper_commit,
 };
 
 void exynos_drm_mode_config_init(struct drm_device *dev)
@@ -268,10 +224,7 @@ void exynos_drm_mode_config_init(struct drm_device *dev)
 	dev->mode_config.max_height = 4096;
 
 	dev->mode_config.funcs = &exynos_drm_mode_config_funcs;
-}
+	dev->mode_config.helper_private = &exynos_drm_mode_config_helpers;
 
-MODULE_AUTHOR("Inki Dae <inki.dae@samsung.com>");
-MODULE_AUTHOR("Joonyoung Shim <jy0922.shim@samsung.com>");
-MODULE_AUTHOR("Seung-Woo Kim <sw0312.kim@samsung.com>");
-MODULE_DESCRIPTION("Samsung SoC DRM FB Driver");
-MODULE_LICENSE("GPL");
+	dev->mode_config.allow_fb_modifiers = true;
+}
