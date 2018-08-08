@@ -1,0 +1,40 @@
+Serial Debug (UART)
+--------------------------------------
+UART0_TxD   BCM14
+UART0_RxD   BCM15
+
+I2C - OLED display
+--------------------------------------
+I2C1_SCL    BCM3
+I2C1_SDA    BCM2
+            BCM4     in
+
+Sixfab shield
+--------------------------------------
+RI          BCM6     in
+DTR         BCM13    out    pull-up
+W_DISABLE   BCM19    in
+PERST       BCM26    out    pull-down
+
+SIM interface
+--------------------------------------
+SIM_RESET   BCM12   in
+SIM_CLOCK   BCM16   in
+SIM_MOSI    BCM20   in
+SIM_MISO    BCM21   out     pull-down
+
+Button
+--------------------------------------
+BUTTON      BCM5    in      pull-up
+
+
+
+SIM interface (pinout)
+left-to-right (from the side of raspberry pi)
+--------------------------------------
+1 - GND
+2 - Vcc
+3 - Vpp
+4 - RESET
+5 - DATA
+6 - CLOCK
