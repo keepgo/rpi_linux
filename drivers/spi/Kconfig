@@ -825,7 +825,7 @@ config SPI_SLAVE_SYSTEM_CONTROL
 	  SPI slave handler to allow remote control of system reboot, power
 	  off, halt, and suspend.
 
-config SPI_SLAVE_SIM_CONTROL
+config KEEPGO_VSIM_CONTROL
     tristate "Keepgo virtual SIM module"
     depends on ARM
     help
