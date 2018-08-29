@@ -15,13 +15,15 @@ static bool   isDebounce = true;
 static struct timespec ts_last, ts_current, ts_diff;
 
 static irq_handler_t vsim_reset_irq_handler (unsigned int irq, void *dev_id, struct pt_regs * regs);
-static irq_handler_t vsim_clock_irq_handler (unsigned int irq, void *dev_id, struct pt_regs * regs);
+// static irq_handler_t vsim_clock_irq_handler (unsigned int irq, void *dev_id, struct pt_regs * regs);
 
 static ssize_t       isDebounce_show        (struct kobject *kobj, struct kobj_attribute *attr, char *buf);
 static ssize_t       isDebounce_store       (struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count);
 static ssize_t       ledOn_show             (struct kobject *kobj, struct kobj_attribute *attr, char *buf);
 static ssize_t       lastTime_show          (struct kobject *kobj, struct kobj_attribute *attr, char *buf);
 static ssize_t       diffTime_show          (struct kobject *kobj, struct kobj_attribute *attr, char *buf);
+
+static bool          readSpiClock           (void);
 
 static struct kobject *vsim_kobj;
 

@@ -133,12 +133,14 @@ static int __init vsim_init(void){
                          NULL);                 // The *dev_id for shared interrupt lines, NULL is okay
     printk(KERN_INFO "Virtual SIM: irqNumberReset(result) = %d", result);
 
+    /*
     result = request_irq(irqNumberClock,
                          (irq_handler_t) vsim_clock_irq_handler,
                          IRQF_TRIGGER_RISING,
                          "vsim_clock_handler",
                          NULL);
     printk(KERN_INFO "Virtual SIM: irqNumberClock(result) = %d", result);
+    */
 
     return result;
 }
@@ -167,9 +169,30 @@ static irq_handler_t vsim_reset_irq_handler (unsigned int irq, void *dev_id, str
 
     printk(KERN_INFO "Virtual SIM: The virtual SIM reset state is currently: %d\n", gpioSimResetState);
 
+    if ( gpioSimResetState == 1 )
+        readSpiClock();
+
     return (irq_handler_t) IRQ_HANDLED;  // Announce that the IRQ has been handled correctly
 }
 
+static bool readSpiClock (void) {
+    bool clock_state, reset_state;
+    volatile unsigned int gpio_value;
+    volatile unsigned int * gpio_address = (unsigned int *)0x3F200034;  // GPIO Pin Level 0 (BCM 0-31)
+
+    reset_state = true;
+    do {
+        gpio_value = * (gpio_address);
+        printk(KERN_INFO "Virtual SIM: GPIO value: %d", gpio_value);
+        reset_state = (gpio_value & (1 << gpioSimReset));
+        clock_state = (gpio_value & (1 << gpioSimClock));
+        printk(KERN_INFO "Virtual SIM: Clock: %d", clock_state);
+    } while ( reset_state );
+
+    return true;
+}
+
+/*
 static irq_handler_t vsim_clock_irq_handler (unsigned int irq, void *dev_id, struct pt_regs *regs) {
     // uint gpioSimClockState;
 
@@ -179,6 +202,7 @@ static irq_handler_t vsim_clock_irq_handler (unsigned int irq, void *dev_id, str
 
     return (irq_handler_t) IRQ_HANDLED;
 }
+*/
 
 module_init(vsim_init);
 module_exit(vsim_exit);
