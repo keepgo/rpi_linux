@@ -133,15 +133,14 @@ static int __init vsim_init(void){
                          NULL);                 // The *dev_id for shared interrupt lines, NULL is okay
     printk(KERN_INFO "Virtual SIM: irqNumberReset(result) = %d", result);
 
-    /*
+    
     result = request_irq(irqNumberClock,
                          (irq_handler_t) vsim_clock_irq_handler,
                          IRQF_TRIGGER_RISING,
                          "vsim_clock_handler",
                          NULL);
     printk(KERN_INFO "Virtual SIM: irqNumberClock(result) = %d", result);
-    */
-
+    
     return result;
 }
 
@@ -149,10 +148,21 @@ static void __exit vsim_exit(void){
     kobject_put(vsim_kobj);                     // clean up -- remove the kobject sysfs entry
     gpio_set_value(gpioLED, 0);                 // Turn the LED off, makes it clear the device was unloaded
     gpio_unexport(gpioLED);                     // Unexport the LED GPIO
-    free_irq(irqNumberReset, NULL);                  // Free the IRQ number, no *dev_id required in this case
-    gpio_unexport(gpioSimReset);                // Unexport the Button GPIO
+
+    // Reset
+    free_irq(irqNumberReset, NULL);             // Free the IRQ number, no *dev_id required in this case
+    gpio_unexport(gpioSimReset);                // Unexport the SIM reset GPIO
+    gpio_free(gpioSimReset);                    // Free the SIM reset GPIO
+
+    // Clock
+    free_irq(irqNumberClock, NULL);             // Free the IRQ number, no *dev_id required in this case
+    gpio_unexport(gpioSimClock);                // Unexport the Button GPIO
+    gpio_free(gpioSimClock);
+
+    // LED
+    gpio_unexport(gpioLED);                     // Unexport the Button GPIO
     gpio_free(gpioLED);                         // Free the LED GPIO
-    gpio_free(gpioSimReset);                    // Free the Button GPIO
+    
     printk(KERN_INFO "Virtual SIM: Goodbye from the Virtual SIM driver!\n");
 }
 
@@ -160,8 +170,8 @@ static irq_handler_t vsim_reset_irq_handler (unsigned int irq, void *dev_id, str
     uint gpioSimResetState = gpio_get_value(gpioSimReset);
 
     // LED
-    ledOn = (bool)gpioSimResetState;
-    gpio_set_value(gpioLED, ledOn);
+    // ledOn = (bool)gpioSimResetState;
+    gpio_set_value(gpioLED, gpioSimResetState);
 
     getnstimeofday(&ts_current);                   // Get the current time as ts_current
     ts_diff = timespec_sub(ts_current, ts_last);   // Determine the time difference between last 2 presses
@@ -169,12 +179,20 @@ static irq_handler_t vsim_reset_irq_handler (unsigned int irq, void *dev_id, str
 
     printk(KERN_INFO "Virtual SIM: The virtual SIM reset state is currently: %d\n", gpioSimResetState);
 
+    /*
     if ( gpioSimResetState == 1 )
         readSpiClock();
+    */
+    _resetState = ( gpioSimResetState == 1 ) ? true : false;
+    if ( !_resetState ) {
+        printk(KERN_INFO "Virtual SIM: Received %d clocks\n", _clockCount);
+        _clockCount = 0;
+    }
 
     return (irq_handler_t) IRQ_HANDLED;  // Announce that the IRQ has been handled correctly
 }
 
+/*
 static bool readSpiClock (void) {
     bool clock_state, reset_state;
     volatile unsigned int gpio_value;
@@ -191,18 +209,19 @@ static bool readSpiClock (void) {
 
     return true;
 }
+*/
 
-/*
 static irq_handler_t vsim_clock_irq_handler (unsigned int irq, void *dev_id, struct pt_regs *regs) {
     // uint gpioSimClockState;
 
-    printk(KERN_INFO "Virtual SIM: %s", __FUNCTION__);
+    _clockCount++;
+    // printk(KERN_INFO "Virtual SIM: Clock, %d", __FUNCTION__, clockCount);
     // gpioSimClockState = gpio_get_value(gpioSimClock);
     // printk(KERN_INFO "Virtual SIM: Clock: %d", gpioSimClockState);
 
     return (irq_handler_t) IRQ_HANDLED;
 }
-*/
+
 
 module_init(vsim_init);
 module_exit(vsim_exit);
